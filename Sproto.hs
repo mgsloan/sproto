@@ -7,31 +7,29 @@ import qualified Data.ByteString.Lazy.Char8 as B
 type WireId = Word32
 data WireValue = WireVar WireId Word64
                | Wire64 WireId Word64
-			   | WireString WireId Word32 String
+			   | WireString WireId String
 			   | Wire32 WireId Word32
     deriving Show
-	
-data Field a = Field Word32 a
 
 putId :: (Integral a, Bits a) => a -> a -> Put
-putId i wt = putVarSInt $ i `shiftR` 3 + wt
+putId i wt = putVarSInt $ i `shiftL` 3 .|. wt
 
-instance Binary (Field WireValue) where
-  put (Field i (Wire32 val)) = putId i 5 >> putLInt 4 val
-  put (Field i (Wire64 val)) = putId i 1 >> putLInt 8 val
-  put (Field i (WireVar val)) = putId i 0 >> putVarSInt val
-  put (Field i (WireString val)) = putId i 2 >> putVarSInt (length val) >> put (B.pack val)
+instance Binary WireValue where
+  put (Wire32 i val) = putId i 5 >> putLInt 4 val
+  put (Wire64 i val) = putId i 1 >> putLInt 8 val
+  put (WireVar i val) = putId i 0 >> putVarSInt val
+  put (WireString i val) = putId i 2 >> putVarSInt (length val) >> put (B.pack val)
   get = do
     key <- getVarInt
-    let id  = key `shiftR` 3
+    let i  = key `shiftR` 3
     let typ = key .&. 0x07
     case typ of
-      0 -> getVarInt >>= return . Field id . WireVar
-      1 -> getLInt 8 >>= return . Field id . Wire64
-      5 -> getLInt 4 >>= return . Field id . Wire32
+      0 -> getVarInt >>= return . WireVar i
+      1 -> getLInt 8 >>= return . Wire64 i
+      5 -> getLInt 4 >>= return . Wire32 i
       2 -> do
         l <- getVarInt
-        get >>= return . Field id . WireString . take l . B.unpack 
+        get >>= return . WireString i . take l . B.unpack 
 
 getLInt :: (Integral a, Bits a) => Int -> Get a
 getLInt 0 = return 0
