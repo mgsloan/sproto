@@ -1,3 +1,5 @@
+{-# OPTIONS_GHC -fglasgow-exts #-}
+
 module Data.Sproto.Types where
 import Data.Word
 import Data.Bits

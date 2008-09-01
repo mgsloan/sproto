@@ -1,12 +1,21 @@
+{-# OPTIONS_GHC -fglasgow-exts #-}
+
 module Data.Sproto where
 import Data.Word
+import Data.Int
 import Data.Binary
+import qualified Data.Binary.Get as G
+import qualified Data.Binary.Put as P
 import Data.Bits
 import qualified Data.ByteString.Lazy.Char8 as B
 import Data.Sproto.Types
 import Data.Sproto.Descriptor
 import Data.Maybe
+import Data.Char (chr)
 import qualified Data.Map as M
+-- GHC internals for getting at Double and Float representation as Word64 and Word32
+import GHC.Exts (Double(D#),Float(F#),unsafeCoerce#)
+import GHC.Word (Word64(W64#),Word32(W32#))
 
 data WireValue = WireVar WireId Word64
                | Wire64 WireId Word64
@@ -26,15 +35,24 @@ data FieldValue = MessageVal  [Field]
                 | BoolVal     Bool
                 | StringVal   String
                 | BytesVal    B.ByteString
+  deriving Show
 
 data Field = Field String WireId FieldValue
            | UnknownField WireValue
+  deriving Show
+
+test x n d = G.runGet (readMsg (toDicts x) n) $ B.pack $ map chr d
 
 readMsg :: DefDicts -> String -> Get FieldValue
 readMsg env v = return . MessageVal =<< (readFields env . fromJust . M.lookup v . fst $ env)
 
 readFields :: DefDicts -> M.Map WireId MessageField -> Get [Field]
-readFields = error "not implemented"
+readFields env fs = do
+  e <- G.isEmpty
+  if e then return [] else do
+    f <- readField env fs
+    others <- readFields env fs
+    return $ f : others
 
 readField :: DefDicts -> M.Map WireId MessageField -> Get Field
 readField env fs =
@@ -72,34 +90,35 @@ with64 f val = case val of
   (Wire64 _ x) -> f x
   _ -> error "Expected 64-bit field"
 
+integ :: (Integral a) => a -> FieldValue
+integ = IntegralVal . fromIntegral
 
 readVal :: DefDicts -> FieldType -> WireValue -> FieldValue 
-readVal env typ val = error "not implemented"
-{-  (case typ of
-    --CustomTyp str -> withString (decode . CustomTypReader env str)
-    EnumTyp str def -> withVar ()
-    DoubleTyp  def -> with64 ()
-    FloatTyp   def -> with32 ()
-    Int32Typ   def -> withVar 
-    Int64Typ   def -> withVar 
-    UInt32Typ  def -> withVar 
-    UInt64Typ  def -> withVar 
-    SInt32Typ  def -> withVar 
-    SInt64Typ  def -> withVar  
-    Fixed32Typ def -> with32 
-    Fixed64Typ def -> with64 ()
-    BoolTyp    def -> withVar ()
-    StringTyp  def -> withString ()
-    BytesTyp -> withString ()
+readVal env typ val =
+  (case typ of
+    CustomTyp str -> withString $ G.runGet $ readMsg env str
+    EnumTyp str def -> withVar (\x -> EnumVal (fromIntegral x) "")
+    DoubleTyp  def -> with64 $ DoubleVal . castWord64ToDouble
+    FloatTyp   def -> with32 $ FloatVal . castWord32ToFloat
+    Int32Typ   def -> withVar integ
+    Int64Typ   def -> withVar integ
+    UInt32Typ  def -> withVar integ
+    UInt64Typ  def -> withVar integ
+    SInt32Typ  def -> withVar $ integ . zzDecode32
+    SInt64Typ  def -> withVar $ integ . zzDecode64
+    Fixed32Typ def -> with32 integ
+    Fixed64Typ def -> with64 integ
+    BoolTyp    def -> withVar $ BoolVal . (>0)
+    StringTyp  def -> withString $ StringVal . B.unpack
+    BytesTyp -> withString BytesVal
   ) $ val
--}
 
 putId :: (Integral a, Bits a) => a -> a -> Put
 putId i wt = putVarSInt $ i `shiftL` 3 .|. wt
 
 instance Binary WireValue where
-  put (Wire32 i val) = putId i 5 >> putLInt 4 val
-  put (Wire64 i val) = putId i 1 >> putLInt 8 val
+  put (Wire32 i val) = putId i 5 >> P.putWord32be val
+  put (Wire64 i val) = putId i 1 >> P.putWord64be val
   put (WireVar i val) = putId i 0 >> putVarSInt val
   put (WireString i val) = putId i 2 >> putVarSInt (B.length val) >> put val
   get = do
@@ -108,24 +127,14 @@ instance Binary WireValue where
     let typ = key .&. 0x07
     case typ of
       0 -> getVarInt >>= return . WireVar i
-      1 -> getLInt 8 >>= return . Wire64 i
-      5 -> getLInt 4 >>= return . Wire32 i
+      1 -> G.getWord64be >>= return . Wire64 i
+      5 -> G.getWord32be >>= return . Wire32 i
       2 -> do
         l <- getVarInt
-        get >>= return . WireString i . B.take l
-
-getLInt :: (Integral a, Bits a) => Int -> Get a
-getLInt 0 = return 0
-getLInt i = do
-  b <- getWord8
-  next <- getLInt (i-1)
-  return $ fromIntegral b + (next `shiftL` 8)
-
-putLInt :: (Integral a, Bits a) => Int -> a -> Put
-putLInt 0 x = return () -- x should be 0, otherwise number too large to encode
-putLInt i x = putWord8 (fromIntegral $ x .&. 0xFF) >> putLInt (i-1) (x `shiftR` 8)
+        G.getLazyByteString l >>= return . WireString i
 
 --All following lines jacked straight from Christopher Kuklewicz's protocol buffers lib
+
 getVarInt :: (Integral a, Bits a) => Get a
 getVarInt = do -- optimize first read instead of calling (go 0 0)
   b <- getWord8
@@ -159,14 +168,21 @@ putVarUInt b = let go i | i < 0x80 = putWord8 (fromIntegral i)
                         | otherwise = putWord8 (fromIntegral (i .&. 0x7F) .|. 0x80) >> go (i `shiftR` 7)
                in go b
 
-{-
+castWord64ToDouble :: Word64 -> Double
+castWord64ToDouble (W64# w) = D# (unsafeCoerce# w)
+castWord32ToFloat :: Word32 -> Float
+castWord32ToFloat (W32# w) = F# (unsafeCoerce# w)
+castDoubleToWord64 :: Double -> Word64
+castDoubleToWord64 (D# d) = W64# (unsafeCoerce# d)
+castFloatToWord32 :: Float -> Word32
+castFloatToWord32 (F# d) = W32# (unsafeCoerce# d)
+
 -- Taken from google's code, but I had to explcitly add fromIntegral in the right places:
-zzEncode32 :: Int32 -> Word32
+zzEncode32 :: Int32 -> Word64
 zzEncode32 x = fromIntegral ((x `shiftL` 1) `xor` (x `shiftR` 31))
 zzEncode64 :: Int64 -> Word64
 zzEncode64 x = fromIntegral ((x `shiftL` 1) `xor` (x `shiftR` 63))
-zzDecode32 :: Word32 -> Int32
+zzDecode32 :: Word64 -> Int32
 zzDecode32 w = (fromIntegral (w `shiftR` 1)) `xor` (negate (fromIntegral (w .&. 1)))
 zzDecode64 :: Word64 -> Int64
 zzDecode64 w = (fromIntegral (w `shiftR` 1)) `xor` (negate (fromIntegral (w .&. 1)))
--}

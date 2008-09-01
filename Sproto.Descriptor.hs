@@ -64,4 +64,3 @@ toDicts = (M.fromList *** M.fromList) . concatT . map denest . absoluteNames "" 
           where fieldMap = M.fromList $ map (fieldId &&& id) f
         denest (Enum s f) = ([], [(s, M.fromList f)])
         concatT = foldl1 (\(x1, y1) (x2, y2) -> (x1++x2, y1++y2))
-
