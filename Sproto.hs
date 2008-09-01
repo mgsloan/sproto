@@ -27,6 +27,8 @@ wireId (Wire64 x _) = x
 wireId (WireString x _) = x
 wireId (Wire32 x _) = x
 
+newtype WireValues = WireValues [WireValue]
+
 data FieldValue = MessageVal  [Field]
                 | EnumVal     Integer String
                 | DoubleVal   Double
@@ -41,34 +43,19 @@ data Field = Field String WireId FieldValue
            | UnknownField WireValue
   deriving Show
 
-test x n d = G.runGet (readMsg (toDicts x) n) $ B.pack $ map chr d
+test x n = readMsg (toDicts x) n . decode . B.pack . map chr
 
-readMsg :: DefDicts -> String -> Get FieldValue
-readMsg env v = return . MessageVal =<< (readFields env . fromJust . M.lookup v . fst $ env)
+readMsg :: DefDicts -> String -> WireValues -> FieldValue
+readMsg env v (WireValues xs) = MessageVal . processFields . map (readField env (fromJust $ M.lookup v $ fst env)) $ xs
 
-readFields :: DefDicts -> M.Map WireId MessageField -> Get [Field]
-readFields env fs = do
-  e <- G.isEmpty
-  if e then return [] else do
-    f <- readField env fs
-    others <- readFields env fs
-    return $ f : others
+processFields = id
 
-readField :: DefDicts -> M.Map WireId MessageField -> Get Field
-readField env fs =
-  do wireVal <- get
-     let ix = wireId wireVal
+readField :: DefDicts -> M.Map WireId MessageField -> WireValue -> Field
+readField env fs wireVal =
+  let ix = wireId wireVal in
      case M.lookup ix fs of
-       Just (MessageField _ n _ t) -> return . Field n ix $ readVal env t wireVal
-       Nothing -> return $ UnknownField wireVal
-
-{-
-data CustomTypReader = CustomTypReader DefDicts String B.ByteString
-
-instance Binary CustomTypReader where
-  get (CustomTypReader env n str) = 
-  put = error "Not implemented"
--}
+       Just (MessageField _ n _ t) -> Field n ix $ readVal env t wireVal
+       Nothing -> UnknownField wireVal
 
 withVar :: (Word64 -> a) -> WireValue -> a
 withVar f val = case val of
@@ -96,7 +83,7 @@ integ = IntegralVal . fromIntegral
 readVal :: DefDicts -> FieldType -> WireValue -> FieldValue 
 readVal env typ val =
   (case typ of
-    CustomTyp str -> withString $ G.runGet $ readMsg env str
+    CustomTyp str -> withString $ readMsg env str . decode
     EnumTyp str def -> withVar (\x -> EnumVal (fromIntegral x) "")
     DoubleTyp  def -> with64 $ DoubleVal . castWord64ToDouble
     FloatTyp   def -> with32 $ FloatVal . castWord32ToFloat
@@ -112,6 +99,15 @@ readVal env typ val =
     StringTyp  def -> withString $ StringVal . B.unpack
     BytesTyp -> withString BytesVal
   ) $ val
+
+instance Binary WireValues where
+  put (WireValues xs) = mapM_ put xs
+  get = do
+    e <- G.isEmpty
+    if e then return (WireValues []) else do
+      x <- get
+      (WireValues xs) <- get
+      return . WireValues $ x : xs
 
 putId :: (Integral a, Bits a) => a -> a -> Put
 putId i wt = putVarSInt $ i `shiftL` 3 .|. wt
