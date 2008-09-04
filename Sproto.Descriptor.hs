@@ -1,4 +1,7 @@
-module Data.Sproto.Descriptor where
+module Data.Sproto.Descriptor (
+    FieldType(..), FieldRule(..), MessageField(..), Proto(..), DefDicts, 
+    toDicts
+  ) where
 import Data.Int
 import Data.Word
 import Data.Ranged

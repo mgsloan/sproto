@@ -1,6 +1,6 @@
 {-# OPTIONS_GHC -fglasgow-exts #-}
 
-module Data.Sproto.Types where
+module Data.Sproto.Types ( WireId ) where
 import Data.Word
 import Data.Bits
 
