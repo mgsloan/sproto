@@ -12,7 +12,9 @@ import Data.Sproto.Types
 import Data.Sproto.Descriptor
 import Data.Sproto.Binary
 
-data FieldValue = MessageVal  [Field]
+type Members = M.Map String [FieldValue]
+
+data FieldValue = MessageVal  Members
                 | EnumVal     Integer String
                 | DoubleVal   Double
                 | FloatVal    Float
@@ -29,7 +31,8 @@ data Field = Field WireId FieldValue
 test x n = readMsg (toDicts x) n . decode . B.pack . map chr
 
 readMsg :: DefDicts -> String -> WireValues -> FieldValue
-readMsg env v (WireValues xs) = MessageVal . processFields fs . map (readField env fs) $ xs
+readMsg env v (WireValues xs) =
+    MessageVal . fromList . map (processField $ elems fs) . map (readField env fs) $ xs
   where fs = fromJust $ M.lookup v $ fst env
 
 wireId (WireVar x _) = x
@@ -42,17 +45,14 @@ fid ix x = case x of
 --            UnknownField  | i == ix -> True
             _ -> False
 
---protoMerge :: FieldValue -> FieldValue -> FieldValue
---protoMerge (MessageVal xs) (MessageVal ys) 
+protoMerge :: FieldValue -> FieldValue -> FieldValue
+protoMerge (MessageVal xs) (MessageVal ys) = MessageVal $ map protoMerge $ matchOn fid xs ys
+protoMerge _ x = x
 
-processFields decls fs = fs {- map process $ elems decls
-  where process (MessageField rule name ix typ) =
-            case rule of
-              Required -> merge fields
-              Optional -> merge fields
-              Repeated -> fields
-          where fields = filter (fid ix)
--}
+processField (MessageField Required _ ix _) = foldl1 protoMerge fields
+             (MessageField Optional _ ix _) = foldl1 protoMerge fields
+			 (MessageField Repeated _ ix _) = fields
+        where fields = filter (fid ix)
 
 readField :: DefDicts -> M.Map WireId MessageField -> WireValue -> Field
 readField env fs wireVal =
@@ -84,10 +84,6 @@ readVal env typ val =
     EnumTyp str def -> withVar (\x -> EnumVal (fromIntegral x) "")
     DoubleTyp  def -> with64 $ DoubleVal . castWord64ToDouble
     FloatTyp   def -> with32 $ FloatVal . castWord32ToFloat
-    Int32Typ   def -> withVar integ
-    Int64Typ   def -> withVar integ
-    UInt32Typ  def -> withVar integ
-    UInt64Typ  def -> withVar integ
     SInt32Typ  def -> withVar $ IntegralVal . zzDecode32
     SInt64Typ  def -> withVar $ IntegralVal . zzDecode64
     Fixed32Typ def -> with32 integ
@@ -95,4 +91,5 @@ readVal env typ val =
     BoolTyp    def -> withVar $ BoolVal . (>0)
     StringTyp  def -> withString $ StringVal . B.unpack
     BytesTyp -> withString BytesVal
+	_ -> withVar integ
   ) $ val
