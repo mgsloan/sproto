@@ -1,4 +1,4 @@
-module Data.Sproto.Descriptor.Gen () where
+module Data.Sproto.HaskellGen () where
 import Data.Sproto.Descriptor
 import Data.Sproto.Types
 import qualified Data.Map as M
