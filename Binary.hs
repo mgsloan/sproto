@@ -22,8 +22,7 @@ import GHC.Word (Word64(W64#),Word32(W32#))
 
 import Data.Sproto.Types
 
-
-newtype WireValues = WireValues [WireValue]
+newtype WireValues = WireValues [WireValue] deriving Show
 
 instance Binary WireValues where
   put (WireValues xs) = mapM_ put xs

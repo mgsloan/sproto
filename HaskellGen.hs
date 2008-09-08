@@ -17,6 +17,7 @@ defDictsToHaskell (ms, es) = prefix ++ (seperateWith "\n\n" $ map enumToHaskell 
                  \import qualified Data.Sproto.Binary as SprotoB\n\n\
                  \class Default a where\n\
                  \    def :: a\n\n"
+--todo: figure out what to do about identical record names.
 
 munge c = capitalize . concatMap numChar
   where capitalize (x:xs) | isAlpha x = (if c then toUpper else toLower) x : xs
@@ -30,14 +31,15 @@ enumToHaskell (str, fields) = unwords $ ["data", name, "=", name] ++ intersperse
 
 messageToHaskell :: (String, M.Map WireId MessageField) -> String
 messageToHaskell (str, m) = unlines . map unwords $
-    [["data", name, "=", name, "{"] ++ concat (intersperse [","] $ map fieldRecord fields) ++ ["}"],
+    [["data", name, "=", name, "{"] ++ concat (intersperse [","] $ map fieldRecord fields) ++ [" , unknown :: [ WireMessage ] }"],
      ["instance Default", name, "where"],
      ["    def = ", name] ++ map fieldDefault fields,
      ["instance Bin.Binary", name, "where"],
     -- ["    put = fast"],
      ["    get =", fastName . head $ fields, "def"],
-     ["      where slow v = BinG.getWord8 >>= \\x -> case x of"]
-    ] ++ map slowCase fields ++ fastCases fields
+     ["      where slow x v = case x of"]
+    ] ++ map slowCase fields ++
+    [["               "]] ++ fastCases fields
   where fields = M.elems m
         name = munge True str
         fieldRecord x = [munge False $ fieldName x, if fieldRule x == Repeated then ":: [" else "::",
@@ -58,7 +60,7 @@ messageToHaskell (str, m) = unlines . map unwords $
         fastCases (x:xs) = (["           ", fastName x, "v = BinG.isEmpty >>= \\e -> if e then return v else BinG.getWord8 >>= \\x -> if x ==", show $ fbyte x, "then ("] ++
             (\(g,p)->[g,">>= \\y ->"] ++ if null xs then ["return $", p]
                                                     else [fastName . head $ xs, "$", p]
-            ) (readType x) ++ [") else (", "slow v >>=", fastName x, ")"]
+            ) (readType x) ++ [") else (", "slow x v >>=", fastName x, ")"]
           ) : fastCases xs
         readType x = (g, "v { " ++ munge False (fieldName x) ++ " = " ++ p ++ (if fieldRule x == Repeated then " : " ++ munge False (fieldName x) ++ " v" else "") ++ " }")
           where (g,p) = case fieldType x of
@@ -91,7 +93,5 @@ messageToHaskell (str, m) = unlines . map unwords $
             --EnumTyp _ v  -> show v
             Int32Typ   v -> show v
             Int64Typ   v -> show v
-            UInt32Typ  v -> show v
-            UInt64Typ  v -> show v
             SInt32Typ  v -> show v
             SInt64Typ  v -> show v
