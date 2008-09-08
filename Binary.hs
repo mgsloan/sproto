@@ -39,6 +39,8 @@ putId i wt = putVarSInt $ i `shiftL` 3 .|. wt
 data WireValue = WireVar WireId Word64
                | Wire64 WireId Word64
                | WireString WireId B.ByteString               | Wire32 WireId Word32
+               | WireGroupOpen WireId
+               | WireGroupClose WireId
     deriving Show
 
 instance Binary WireValue where
@@ -55,6 +57,8 @@ instance Binary WireValue where
       1 -> G.getWord64be >>= return . Wire64 i
       5 -> G.getWord32be >>= return . Wire32 i
       2 -> getVarInt >>= G.getLazyByteString >>= return . WireString i
+      3 -> return $ WireGroupOpen i
+      4 -> return $ WireGroupClose i
 
 getBytes = getVarInt >>= G.getLazyByteString
 

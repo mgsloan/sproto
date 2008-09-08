@@ -7,7 +7,6 @@ import Data.Function (on)
 import Data.Maybe
 import qualified Data.ByteString.Lazy.Char8 as B
 import qualified Data.Map as M
-import qualified Data.Ranged as R
 import qualified Data.List as L
 
 import Data.Sproto.Types
@@ -35,7 +34,6 @@ data FieldValue = MessageField  String B.ByteString
                 | StringField   String
                 | BytesField    B.ByteString
 
-msg n xs = ProtoMessage n xs [] R.rSetEmpty
 test x n = readMsg (toDicts x) n . decode . B.pack . map chr
 
 writeMsg :: DefDicts -> Message -> WireValues
