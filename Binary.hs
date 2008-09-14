@@ -1,7 +1,7 @@
 {-# OPTIONS_GHC -fglasgow-exts #-}
 
 module Data.Sproto.Binary (
-    WireValue(..), WireValues(..),
+    WireField(..), WireValue(..), WireFields(..),
 	getBytes,
 	getVarInt, putVarSInt, putVarUInt,
     castFloat, castDouble, zigzag
@@ -11,6 +11,9 @@ import Data.Binary
 import Data.Bits
 import Data.Int
 import Data.Word
+import Data.Char (ord)
+import Numeric (showHex)
+import Text.Show(showListWith)
 import qualified Data.Binary.Get as G
 import qualified Data.Binary.Put as P
 import qualified Data.ByteString.Lazy.Char8 as B
@@ -21,57 +24,64 @@ import GHC.Word (Word64(W64#),Word32(W32#))
 
 import Data.Sproto.Types
 
-newtype WireValues = WireValues [WireValue] deriving Show
+newtype WireFields = WireFields [WireField]
 
-instance Binary WireValues where
-  put (WireValues xs) = mapM_ put xs
+instance Binary WireFields where
+  put (WireFields xs) = mapM_ put xs
   get = do
     e <- G.isEmpty
-    if e then return (WireValues []) else do
+    if e then return (WireFields []) else do
       x <- get
-      (WireValues xs) <- get
-      return . WireValues $ x : xs
+      (WireFields xs) <- get
+      return . WireFields $ x : xs
+
+data WireField = WireField WireId WireValue
+
+data WireValue = WireVar Word64
+               | Wire64 Word64
+               | WireString B.ByteString               | Wire32 Word32
+               | WireGroup
+instance Show WireValue where
+  show (WireVar x) = showHex x ""
+  show (Wire64 x) = showHex x ""
+  show (WireString x) = (showListWith showHex . map (ord) . B.unpack $ x) $ ""
+  show (Wire32 x) = showHex x ""
 
 putId :: (Integral a, Bits a) => a -> a -> Put
 putId i wt = putVarSInt $ i `shiftL` 3 .|. wt
 
-data WireValue = WireVar WireId Word64
-               | Wire64 WireId Word64
-               | WireString WireId B.ByteString               | Wire32 WireId Word32
-               | WireGroupOpen WireId
-               | WireGroupClose WireId
-    deriving Show
-
-instance Binary WireValue where
-  put (Wire32 i val) = putId i 5 >> P.putWord32be val
-  put (Wire64 i val) = putId i 1 >> P.putWord64be val
-  put (WireVar i val) = putId i 0 >> putVarSInt val
-  put (WireString i val) = putId i 2 >> putVarSInt (B.length val) >> put val
+instance Binary WireField where
+  put (WireField i (Wire32 val)) = putId i 5 >> P.putWord32be val
+  put (WireField i (Wire64 val)) = putId i 1 >> P.putWord64be val
+  put (WireField i (WireVar val)) = putId i 0 >> putVarSInt val
+  put (WireField i (WireString val)) = putId i 2 >> putVarSInt (B.length val) >> put val
   get = do
     key <- getVarInt
     let i  = key `shiftR` 3
     let typ = key .&. 0x07
-    case typ of
-      0 -> getVarInt >>= return . WireVar i
-      1 -> G.getWord64be >>= return . Wire64 i
-      5 -> G.getWord32be >>= return . Wire32 i
-      2 -> getVarInt >>= G.getLazyByteString >>= return . WireString i
-      3 -> return $ WireGroupOpen i
-      4 -> return $ WireGroupClose i
+    (\f ->
+     case typ of
+      0 -> getVarInt >>= f . WireVar
+      1 -> G.getWord64be >>= f . Wire64
+      5 -> G.getWord32be >>= f . Wire32
+      2 -> getVarInt >>= G.getLazyByteString >>= f . WireString
+      3 -> f $ WireGroup
+      4 -> f $ WireGroup
+     ) $ return . WireField i
 
 getBytes = getVarInt >>= G.getLazyByteString
 
 --All following lines derived from Christopher Kuklewicz's protocol buffers lib
-castDouble :: Iso Word64 Double
-castDouble = Iso (\(W64# w) -> D# $ unsafeCoerce# w,
-                  \(D# d) -> W64# $ unsafeCoerce# d)
-castFloat :: Iso Word32 Float
-castFloat = Iso (\(W32# w) -> F# $ unsafeCoerce# w,
-                 \(F# d) -> W32# $ unsafeCoerce# d)
+castDouble :: Iso Double Word64
+castDouble = Iso (\(D# d) -> W64# (unsafeCoerce# d))
+                 (\(W64# w) -> D# (unsafeCoerce# w))
+castFloat :: Iso Float Word32
+castFloat = Iso (\(F# d) -> W32# (unsafeCoerce# d))
+                (\(W32# w) -> F# (unsafeCoerce# w))
 
 zigzag :: (Integral a, Bits a, Integral b, Bits b) => Int -> Iso a b
-zigzag n = Iso (\x -> fromIntegral ((x `shiftL` 1) `xor` (x `shiftR` (n-1))),
-                \x -> (fromIntegral (w `shiftR` 1)) `xor` (negate (fromIntegral (w .&. 1)))
+zigzag n = Iso (\x -> fromIntegral $ (x `shiftL` 1) `xor` (x `shiftR` (n-1)))
+               (\x -> (fromIntegral $ x `shiftR` 1) `xor` (negate . fromIntegral $ x .&. 1))
 
 --All following lines jacked straight from Christopher Kuklewicz's protocol buffers lib
 
