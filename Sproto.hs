@@ -13,20 +13,12 @@ import Data.Sproto.Types
 import Data.Sproto.Descriptor
 import Data.Sproto.Binary
 
-data Message = Message String (M.Map String [MemberValue]) [WireValue] deriving Show
+data Message = Message String (M.Map String [FieldValue]) [WireValue] deriving Show
 
-data MemberValue = MessageMember  Message
-                 | EnumMember     String Integer String
-                 | DoubleMember   Double
-                 | FloatMember    Float
-                 | IntegralMember Integer
-                 | BoolMember     Bool
-                 | StringMember   String
-                 | BytesMember    B.ByteString
-  deriving Show
-
-data FieldValue = MessageField  String B.ByteString
-                | EnumField     String Integer
+data FieldValue = UMessageField String B.ByteString
+                | MessageField  Message
+                | UEnumField    String Integer
+                | EnumField     String Integer String
                 | DoubleField   Double
                 | FloatField    Float
                 | IntegralField Integer
@@ -43,7 +35,7 @@ writeMsg env (Message name ms wv) = WireValues $ catMaybes (concatMap (\(str, fs
 
 writeMember :: DefDicts -> ProtoField -> MemberValue -> Maybe WireValue
 writeMember env (ProtoField _ _ ix (CustomTyp _))  (MessageMember m)  = Just . WireString ix . encode $ writeMsg env m
-writeMember env (ProtoField r _ ix (EnumTyp _ d))  (EnumMember _ x _) = if r == Optional && fromIntegral x == d then Nothing else Just . WireVar ix . fromIntegral $ x
+--writeMember env (ProtoField r _ ix (EnumTyp _ d))  (EnumMember _ x _) = if r == Optional && fromIntegral x == d then Nothing else Just . WireVar ix . fromIntegral $ x
 writeMember env (ProtoField r _ ix (DoubleTyp d))  (DoubleMember x)   = if r == Optional && x == d              then Nothing else Just . Wire64 ix . castDoubleToWord64 $ x
 writeMember env (ProtoField r _ ix (FloatTyp d))   (FloatMember x)    = if r == Optional && x == d              then Nothing else Just . Wire32 ix . castFloatToWord32 $ x
 writeMember env (ProtoField r _ ix (Int32Typ d))   (IntegralMember x) = if r == Optional && fromIntegral x == d then Nothing else Just . WireVar ix . fromIntegral $ x
@@ -54,7 +46,7 @@ writeMember env (ProtoField r _ ix (Fixed32Typ d)) (IntegralMember x) = if r == 
 writeMember env (ProtoField r _ ix (Fixed64Typ d)) (IntegralMember x) = if r == Optional && fromIntegral x == d then Nothing else Just . Wire64 ix . fromIntegral $ x
 writeMember env (ProtoField r _ ix (BoolTyp d))    (BoolMember x)     = if r == Optional && x == d              then Nothing else Just . WireVar ix $ (if x then 1 else 0)
 writeMember env (ProtoField r _ ix (StringTyp d))  (StringMember x)   = if r == Optional && x == d              then Nothing else Just . WireString ix . B.pack $ x
-writeMember env (ProtoField _ _ ix (BytesTyp))     (BytesMember x)    = Just $ WireString ix x
+writeMember env (ProtoField r _ ix (BytesTyp d))   (BytesMember x)    = if r == Optional && x == d              then Nothing else Just $ WireString ix x
 
 merge :: [FieldValue] -> FieldValue
 merge xs@((MessageField n _):_) = MessageField n . B.concat . map (\(MessageField _ x) -> x) $ xs
@@ -121,11 +113,11 @@ readVal typ =
     Fixed64Typ  _ -> with64 integ
     BoolTyp     _ -> withVar $ BoolField . (>0)
     StringTyp   _ -> withString $ StringField . B.unpack
-    BytesTyp      -> withString BytesField
+    BytesTyp    _ -> withString BytesField
     _             -> withVar integ
 
 defaultValue :: FieldType -> Maybe FieldValue
-defaultValue (EnumTyp n x)  = Just $ EnumField n $ fromIntegral x
+--defaultValue (EnumTyp n x)  = Just $ EnumField n x
 defaultValue (DoubleTyp x)  = Just $ DoubleField x
 defaultValue (FloatTyp x)   = Just $ FloatField x
 defaultValue (Int32Typ x)   = Just $ integ x
@@ -136,15 +128,15 @@ defaultValue (Fixed32Typ x) = Just $ integ x
 defaultValue (Fixed64Typ x) = Just $ integ x
 defaultValue (BoolTyp x)    = Just $ BoolField x
 defaultValue (StringTyp x)  = Just $ StringField x
+defaultValue (BytesTyp x)   = Just $ BytesField x
 defaultValue _              = Nothing
 
 fieldToMember :: DefDicts -> FieldValue -> MemberValue
 fieldToMember env (MessageField n v) = MessageMember . readMsg env n $ decode v
-fieldToMember env (EnumField n v) = EnumMember n v $ fromJust (M.lookup n (snd env) >>= M.lookup (fromIntegral v))
+fieldToMember env (EnumField n v) = EnumMember n "" -- $ fromJust (M.lookup n (snd env) >>= M.lookup (fromIntegral v))
 fieldToMember env (DoubleField v) = DoubleMember v
 fieldToMember env (FloatField v) = FloatMember v
 fieldToMember env (IntegralField v) = IntegralMember v
 fieldToMember env (BoolField v) = BoolMember v
 fieldToMember env (StringField v) = StringMember v
 fieldToMember env (BytesField v) = BytesMember v
-

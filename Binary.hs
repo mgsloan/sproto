@@ -4,8 +4,7 @@ module Data.Sproto.Binary (
     WireValue(..), WireValues(..),
 	getBytes,
 	getVarInt, putVarSInt, putVarUInt,
-    castWord64ToDouble, castWord32ToFloat, castDoubleToWord64, castFloatToWord32,
-    zzEncode32, zzEncode64, zzDecode32, zzDecode64
+    castFloat, castDouble, zigzag
   ) where
 
 import Data.Binary
@@ -62,6 +61,18 @@ instance Binary WireValue where
 
 getBytes = getVarInt >>= G.getLazyByteString
 
+--All following lines derived from Christopher Kuklewicz's protocol buffers lib
+castDouble :: Iso Word64 Double
+castDouble = Iso (\(W64# w) -> D# $ unsafeCoerce# w,
+                  \(D# d) -> W64# $ unsafeCoerce# d)
+castFloat :: Iso Word32 Float
+castFloat = Iso (\(W32# w) -> F# $ unsafeCoerce# w,
+                 \(F# d) -> W32# $ unsafeCoerce# d)
+
+zigzag :: (Integral a, Bits a, Integral b, Bits b) => Int -> Iso a b
+zigzag n = Iso (\x -> fromIntegral ((x `shiftL` 1) `xor` (x `shiftR` (n-1))),
+                \x -> (fromIntegral (w `shiftR` 1)) `xor` (negate (fromIntegral (w .&. 1)))
+
 --All following lines jacked straight from Christopher Kuklewicz's protocol buffers lib
 
 getVarInt :: (Integral a, Bits a) => Get a
@@ -96,14 +107,3 @@ putVarUInt :: (Integral a, Bits a) => a -> Put
 putVarUInt b = let go i | i < 0x80 = putWord8 (fromIntegral i)
                         | otherwise = putWord8 (fromIntegral (i .&. 0x7F) .|. 0x80) >> go (i `shiftR` 7)
                in go b
-
-castWord64ToDouble (W64# w) = D# (unsafeCoerce# w)
-castWord32ToFloat (W32# w) = F# (unsafeCoerce# w)
-castDoubleToWord64 (D# d) = W64# (unsafeCoerce# d)
-castFloatToWord32 (F# d) = W32# (unsafeCoerce# d)
-
--- Taken from google's code, but I had to explcitly add fromIntegral in the right places:
-zzEncode32 x = fromIntegral ((x `shiftL` 1) `xor` (x `shiftR` 31))
-zzEncode64 x = fromIntegral ((x `shiftL` 1) `xor` (x `shiftR` 63))
-zzDecode32 w = (fromIntegral (w `shiftR` 1)) `xor` (negate (fromIntegral (w .&. 1)))
-zzDecode64 w = (fromIntegral (w `shiftR` 1)) `xor` (negate (fromIntegral (w .&. 1)))
