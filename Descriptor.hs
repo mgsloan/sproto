@@ -29,7 +29,7 @@ type EnumProto = IsoMap String Int
 type Protos = M.Map String (Either MessageProto EnumProto)
 
 data FieldValue = MessageValue Message
-                | EnumValue   String Integer
+                | EnumValue   String Int
                 | DoubleValue Double
                 | FloatValue  Float
                 | IntValue    Integer
@@ -52,9 +52,15 @@ merge :: FieldType -> [FieldValue] -> FieldValue
 merge TYPE_MESSAGE = BytesValue . B.concat . map (\(BytesValue x) -> x)
 merge _ = last
 
+lookupMessage env name = proto
+  where (Left proto) = fromJust $ M.lookup name env
+
+lookupEnum env name = proto
+  where (Right proto) = fromJust $ M.lookup name env
+  
 readMsg :: Protos -> String -> WireFields -> Message
 readMsg env name = resolveMessage env proto . readMessage proto
-  where (Left proto) = fromJust $ M.lookup name env
+  where proto = lookupMessage env name
 
 readMessage :: MessageProto -> WireFields -> Message
 readMessage desc (WireFields fields) = Message (M.fromList known) unknown

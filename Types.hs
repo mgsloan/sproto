@@ -3,7 +3,7 @@
 module Data.Sproto.Types (
     WireId(..), Iso(..), IsoMap(..),
     flipIso, (<<<), (>>>),
-    isoLookup, isoFromList, lookupFrom, lookupTo
+    isoLookup, isoFromList, lookupFrom, lookupTo, isoToList, isoAs, isoBs
   ) where
 
 import Data.Word
@@ -43,6 +43,15 @@ isoLookup f g (IsoMap m1 m2) = Iso (\x -> f . M.lookup x $ m1)
 
 isoFromList :: (Ord a, Ord b) => [(a, b)] -> IsoMap a b
 isoFromList x = IsoMap (M.fromList x) (M.fromList $ map (\(a,b)->(b,a)) x)
+
+isoToList :: (Ord a, Ord b) => IsoMap a b -> [(a, b)]
+isoToList (IsoMap m1 _) = M.toList m1
+
+isoAs :: (Ord a, Ord b) => IsoMap a b -> [a]
+isoAs (IsoMap m1 _) = M.keys m1
+
+isoBs :: (Ord a, Ord b) => IsoMap a b -> [b]
+isoBs (IsoMap _ m2) = M.keys m2
 
 lookupTo :: (Ord a, Ord b) => a -> IsoMap a b -> Maybe b
 lookupTo x (IsoMap m _) = M.lookup x m
